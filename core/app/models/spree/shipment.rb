@@ -6,7 +6,7 @@ module Spree
     belongs_to :address, class_name: 'Spree::Address', inverse_of: :shipments
     belongs_to :stock_location, class_name: 'Spree::StockLocation'
 
-    has_many :shipping_rates, dependent: :delete_all
+    has_many :shipping_rates, -> { order('cost ASC') }, dependent: :delete_all
     has_many :shipping_methods, through: :shipping_rates
     has_many :state_changes, as: :stateful
     has_many :inventory_units, dependent: :delete_all, inverse_of: :shipment
@@ -94,7 +94,7 @@ module Spree
     end
 
     def add_shipping_method(shipping_method, selected = false)
-      shipping_rates.create(shipping_method: shipping_method, selected: selected)
+      shipping_rates.create(shipping_method: shipping_method, selected: selected, cost: cost)
     end
 
     def selected_shipping_rate
@@ -167,6 +167,10 @@ module Spree
       Spree::Money.new(discounted_cost, { currency: currency })
     end
 
+    def display_final_price
+      Spree::Money.new(final_price, { currency: currency })
+    end
+
     def display_item_cost
       Spree::Money.new(item_cost, { currency: currency })
     end
@@ -178,12 +182,16 @@ module Spree
     ManifestItem = Struct.new(:line_item, :variant, :quantity, :states)
 
     def manifest
-      inventory_units.group_by(&:variant).map do |variant, units|
-        units.group_by(&:line_item).map do |line_item, units|
+      # Grouping by the ID means that we don't have to call out to the association accessor
+      # This makes the grouping by faster because it results in less SQL cache hits.
+      inventory_units.group_by(&:variant_id).map do |variant_id, units|
+        units.group_by(&:line_item_id).map do |line_item_id, units|
 
           states = {}
           units.group_by(&:state).each { |state, iu| states[state] = iu.count }
 
+          line_item = units.first.line_item
+          variant = units.first.variant
           ManifestItem.new(line_item, variant, units.length, states)
         end
       end.flatten
@@ -270,11 +278,13 @@ module Spree
     end
 
     def update_amounts
-      self.update_columns(
-        cost: selected_shipping_rate.cost,
-        adjustment_total: adjustments.map(&:update!).compact.sum,
-        updated_at: Time.now,
-      )
+      if selected_shipping_rate
+        self.update_columns(
+          cost: selected_shipping_rate.cost,
+          adjustment_total: adjustments.additional.map(&:update!).compact.sum,
+          updated_at: Time.now,
+        )
+      end
     end
 
     private
@@ -325,7 +335,6 @@ module Spree
       def set_cost_zero_when_nil
         self.cost = 0 unless self.cost
       end
-
 
       def update_adjustments
         if cost_changed? && state != 'shipped'

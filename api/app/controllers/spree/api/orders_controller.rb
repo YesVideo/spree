@@ -22,12 +22,13 @@ module Spree
 
       def create
         authorize! :create, Order
-        @order = Order.build_from_api(current_api_user, order_params)
+        @order = Spree::Core::Importer::Order.import(current_api_user, order_params)
         respond_with(@order, default_template: :show, status: 201)
       end
 
       def empty
         find_order
+        authorize! :update, @order, order_token
         @order.empty!
         @order.update!
         render text: nil, status: 200
@@ -41,6 +42,7 @@ module Spree
 
       def show
         find_order
+        authorize! :show, @order, order_token
         method = "before_#{@order.state}"
         send(method) if respond_to?(method, true)
         respond_with(@order)
@@ -48,6 +50,7 @@ module Spree
 
       def update
         find_order(true)
+        authorize! :update, @order, order_token
         # Parsing line items through as an update_attributes call in the API will result in
         # many line items for the same variant_id being created. We must be smarter about this,
         # hence the use of the update_line_items method, defined within order_decorator.rb.
@@ -74,6 +77,7 @@ module Spree
 
       def apply_coupon_code
         find_order
+        authorize! :update, @order, order_token
         @order.coupon_code = params[:coupon_code]
         @handler = PromotionHandler::Coupon.new(@order).apply
         status = @handler.successful? ? 200 : 422
@@ -138,17 +142,15 @@ module Spree
 
         def find_order(lock = false)
           @order = Spree::Order.lock(lock).find_by!(number: params[:id])
-          authorize! :update, @order, order_token
         end
 
         def before_delivery
           @order.create_proposed_shipments
         end
 
-        def order_token
-          request.headers["X-Spree-Order-Token"] || params[:order_token]
+        def order_id
+          super || params[:id]
         end
-
     end
   end
 end

@@ -1,7 +1,7 @@
 module Spree
   class OrderUpdater
     attr_reader :order
-    delegate :payments, :line_items, :adjustments, :shipments, :update_hooks, to: :order
+    delegate :payments, :line_items, :adjustments, :all_adjustments, :shipments, :update_hooks, to: :order
 
     def initialize(order)
       @order = order
@@ -30,7 +30,7 @@ module Spree
     end
 
     def recalculate_adjustments
-      adjustments.includes(:source).each { |adjustment| adjustment.update! order }
+      all_adjustments.includes(:adjustable).map(&:adjustable).uniq.each { |adjustable| Spree::ItemAdjustments.new(adjustable).update }
     end
 
     # Updates the following Order total values:
@@ -53,7 +53,7 @@ module Spree
     end
 
     def update_shipment_total
-      order.shipment_total = shipments.sum("cost + promo_total")
+      order.shipment_total = shipments.sum(:cost)
       update_order_total
     end
 
@@ -149,9 +149,15 @@ module Spree
           elsif payments.last.state == 'checkout'
             order.payment_state = 'pending'
           elsif payments.last.state == 'completed'
-            order.payment_state = 'credit_owed'
-          else
+            if line_items.empty?
+              order.payment_state = 'credit_owed'
+            else
+              order.payment_state = 'balance_due'
+            end
+          elsif payments.last.state == 'pending'
             order.payment_state = 'balance_due'
+          else
+            order.payment_state = 'credit_owed'
           end
         else
           order.payment_state = 'balance_due'

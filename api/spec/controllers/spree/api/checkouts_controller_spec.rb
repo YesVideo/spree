@@ -21,6 +21,16 @@ module Spree
       Spree::Config[:track_inventory_levels] = true
     end
 
+    context "GET 'show'" do
+      let(:order) { create(:order) }
+
+      it "redirects to Orders#show" do
+        api_get :show, :id => order.number
+        response.status.should == 301
+        response.should redirect_to("/api/orders/#{order.number}")
+      end
+    end
+
     context "POST 'create'" do
       it "creates a new order when no parameters are passed" do
         api_post :create
@@ -163,7 +173,8 @@ module Spree
         order.update_column(:state, "payment")
         api_put :update, :id => order.to_param, :order_token => order.token,
           :order => { :payments_attributes => [{ :payment_method_id => @payment_method.id.to_s }],
-                      :payment_source => { @payment_method.id.to_s => { } } }
+                      :payment_source => { @payment_method.id.to_s => { name: "Spree" } } }
+
         response.status.should == 422
         cc_errors = json_response['errors']['payments.Credit Card']
         cc_errors.should include("Number can't be blank")

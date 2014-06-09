@@ -48,7 +48,7 @@ module Spree
       @@product_attributes = [
         :id, :name, :description, :price, :display_price, :available_on,
         :slug, :meta_description, :meta_keywords, :shipping_category_id,
-        :taxon_ids
+        :taxon_ids, :total_on_hand
       ]
 
       @@product_property_attributes = [
@@ -75,7 +75,7 @@ module Spree
         :user_id, :created_at, :updated_at, :completed_at, :payment_total,
         :shipment_state, :payment_state, :email, :special_instructions, :channel,
         :included_tax_total, :additional_tax_total, :display_included_tax_total,
-        :display_additional_tax_total
+        :display_additional_tax_total, :tax_total, :currency
       ]
 
       @@line_item_attributes = [:id, :quantity, :price, :variant_id]
@@ -112,7 +112,7 @@ module Spree
       @@address_attributes = [
         :id, :firstname, :lastname, :full_name, :address1, :address2, :city,
         :zipcode, :phone, :company, :alternative_phone, :country_id, :state_id,
-        :state_name
+        :state_name, :state_text
       ]
 
       @@country_attributes = [:id, :iso_name, :iso, :iso3, :name, :numcode]
@@ -126,7 +126,7 @@ module Spree
       ]
 
       @@creditcard_attributes = [
-        :id, :month, :year, :cc_type, :last_digits, :first_name, :last_name,
+        :id, :month, :year, :cc_type, :last_digits, :name,
         :gateway_customer_profile_id, :gateway_payment_profile_id
       ]
 

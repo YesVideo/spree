@@ -4,6 +4,13 @@ describe Spree::LineItem do
   let(:order) { create :order_with_line_items, line_items_count: 1 }
   let(:line_item) { order.line_items.first }
 
+  context '#save' do
+    it 'touches the order' do
+      line_item.order.should_receive(:touch)
+      line_item.save
+    end
+  end
+
   context '#destroy' do
     it "fetches deleted products" do
       line_item.product.destroy
@@ -28,6 +35,7 @@ describe Spree::LineItem do
       end
 
       it "triggers adjustment total recalculation" do
+        line_item.should_receive(:update_tax_charge) # Regression test for https://github.com/spree/spree/issues/4671
         line_item.should_receive(:recalculate_adjustments)
         line_item.save
       end
@@ -65,7 +73,7 @@ describe Spree::LineItem do
         order.bill_address = nil
         order.ship_address = nil
         order.save
-        order.tax_zone.should be_nil
+        order.reload.tax_zone.should be_nil
       end
 
       it "does not create a tax adjustment" do

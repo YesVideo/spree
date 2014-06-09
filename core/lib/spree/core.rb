@@ -5,11 +5,13 @@ require 'awesome_nested_set'
 require 'cancan'
 require 'kaminari'
 require 'mail'
+require 'monetize'
 require 'paperclip'
 require 'paranoia'
 require 'ransack'
 require 'state_machine'
 require 'friendly_id'
+require 'font-awesome-rails'
 
 module Spree
 
@@ -41,6 +43,7 @@ module Spree
     autoload :ProductFilters, "spree/core/product_filters"
 
     class GatewayError < RuntimeError; end
+    class DestroyWithOrdersError < StandardError; end
   end
 end
 
@@ -61,6 +64,7 @@ require 'spree/money'
 
 require 'spree/permitted_attributes'
 require 'spree/core/user_address'
+require 'spree/core/user_payment_source'
 require 'spree/core/delegate_belongs_to'
 require 'spree/core/permalinks'
 require 'spree/core/token_resource'
@@ -70,3 +74,5 @@ require 'spree/core/controller_helpers'
 require 'spree/core/controller_helpers/strong_parameters'
 require 'spree/core/controller_helpers/ssl'
 require 'spree/core/controller_helpers/search'
+
+require 'spree/core/importer'

@@ -9,9 +9,10 @@ module Spree
     checkout_flow do
       go_to_state :address
       go_to_state :delivery
-      go_to_state :payment, if: ->(order) {
+      go_to_state :payment, if: ->(order) do
+        order.set_shipments_cost if order.shipments.any?
         order.payment_required?
-      }
+      end
       go_to_state :confirm, if: ->(order) { order.confirmation_required? }
       go_to_state :complete
       remove_transition from: :delivery, to: :confirm
@@ -47,6 +48,8 @@ module Spree
     has_many :line_item_adjustments, through: :line_items, source: :adjustments
     has_many :shipment_adjustments, through: :shipments, source: :adjustments
     has_many :inventory_units, inverse_of: :order
+    has_many :products, through: :variants
+    has_many :variants, through: :line_items
 
     has_and_belongs_to_many :promotions, join_table: 'spree_orders_promotions'
 
@@ -86,8 +89,12 @@ module Spree
       where(number: number)
     end
 
+    scope :created_between, ->(start_date, end_date) { where(created_at: start_date..end_date) }
+    scope :completed_between, ->(start_date, end_date) { where(completed_at: start_date..end_date) }
+
     def self.between(start_date, end_date)
-      where(created_at: start_date..end_date)
+      ActiveSupport::Deprecation.warn("Order#between will be deprecated in Spree 2.3, please use either Order#created_between or Order#completed_between instead.")
+      self.created_between(start_date, end_date)
     end
 
     def self.by_customer(customer)
@@ -113,7 +120,8 @@ module Spree
     end
 
     def all_adjustments
-      Adjustment.where("order_id = :order_id OR adjustable_id = :order_id", :order_id => self.id)
+      Adjustment.where("order_id = :order_id OR (adjustable_id = :order_id AND adjustable_type = 'Spree::Order')",
+        order_id: self.id)
     end
 
     # For compatiblity with Calculator::PriceSack
@@ -143,6 +151,10 @@ module Spree
 
     def display_additional_tax_total
       Spree::Money.new(additional_tax_total, { currency: currency })
+    end
+
+    def display_tax_total
+      Spree::Money.new(included_tax_total + additional_tax_total, { currency: currency })
     end
 
     def display_shipment_total
@@ -196,7 +208,7 @@ module Spree
     # Returns the relevant zone (if any) to be used for taxation purposes.
     # Uses default tax zone unless there is a specific match
     def tax_zone
-      Zone.match(tax_address) || Zone.default_tax
+      @tax_zone ||= Zone.match(tax_address) || Zone.default_tax
     end
 
     # Indicates whether tax should be backed out of the price calcualtions in
@@ -204,7 +216,7 @@ module Spree
     # taxes in that case.
     def exclude_tax?
       return false unless Spree::Config[:prices_inc_tax]
-      return tax_zone != Zone.default_tax
+      tax_zone != Zone.default_tax
     end
 
     # Returns the address for taxation based on configuration
@@ -243,14 +255,16 @@ module Spree
     end
 
     # Associates the specified user with the order.
-    def associate_user!(user)
+    def associate_user!(user, override_email = true)
       self.user = user
-      self.email = user.email
-      self.created_by = user if self.created_by.blank?
+      attrs_to_set = { user_id: user.id }
+      attrs_to_set[:email] = user.email if override_email
+      attrs_to_set[:created_by_id] = user.id if self.created_by.blank?
+      assign_attributes(attrs_to_set)
 
       if persisted?
         # immediately persist the changes we just made, but don't use save since we might have an invalid address associated
-        self.class.unscoped.where(id: id).update_all(email: user.email, user_id: user.id, created_by_id: self.created_by_id)
+        self.class.unscoped.where(id: id).update_all(attrs_to_set)
       end
     end
 
@@ -394,16 +408,8 @@ module Spree
       bill_address.try(:lastname)
     end
 
-    def products
-      line_items.map(&:product)
-    end
-
-    def variants
-      line_items.map(&:variant)
-    end
-
     def insufficient_stock_lines
-     @insufficient_stock_lines ||= line_items.select(&:insufficient_stock?)
+     line_items.select(&:insufficient_stock?)
     end
 
     def merge!(order, user = nil)
@@ -421,6 +427,10 @@ module Spree
 
       self.associate_user!(user) if !self.user && !user.blank?
 
+      updater.update_item_count
+      updater.update_item_total
+      updater.persist_totals
+
       # So that the destroy doesn't take out line items which may have been re-assigned
       order.line_items.reload
       order.destroy
@@ -428,7 +438,10 @@ module Spree
 
     def empty!
       line_items.destroy_all
+      updater.update_item_count
       adjustments.destroy_all
+      shipments.destroy_all
+
       update_totals
       persist_totals
     end
@@ -520,12 +533,7 @@ module Spree
     end
 
     def is_risky?
-      self.payments.where(%{
-        (avs_response IS NOT NULL and avs_response != '' and avs_response != 'D' and avs_response != 'M') or
-        (cvv_response_code IS NOT NULL and cvv_response_code != 'M') or
-        cvv_response_message IS NOT NULL and cvv_response_message != '' or
-        state = 'failed'
-      }.squish!).uniq.count > 0
+      self.payments.risky.count > 0
     end
 
     def approved_by(user)
@@ -561,6 +569,24 @@ module Spree
       update_column(:considered_risky, false)
     end
 
+    # moved from api order_decorator. This is a better place for it.
+    def update_line_items(line_item_params)
+      return if line_item_params.blank?
+      line_item_params.each_value do |attributes|
+        if attributes[:id].present?
+          self.line_items.find(attributes[:id]).update_attributes!(attributes)
+        else
+          self.line_items.create!(attributes)
+        end
+      end
+      self.ensure_updated_shipments
+    end
+
+    def reload
+      remove_instance_variable(:@tax_zone) if defined?(@tax_zone)
+      super
+    end
+
     private
 
       def link_by_email
@@ -569,7 +595,7 @@ module Spree
 
       # Determine if email is required (we don't want validation errors before we hit the checkout)
       def require_email
-        return true unless new_record? or ['cart', 'address'].include?(state)
+        true unless new_record? or ['cart', 'address'].include?(state)
       end
 
       def ensure_line_items_present
@@ -593,7 +619,7 @@ module Spree
 
       def after_cancel
         shipments.each { |shipment| shipment.cancel! }
-        payments.completed.each { |payment| payment.credit! }
+        payments.completed.each { |payment| payment.cancel! }
 
         send_cancel_email
         self.update_column(:payment_state, 'credit_owed') unless shipped?

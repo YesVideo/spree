@@ -24,7 +24,7 @@ module Spree
         end
 
         def find_order
-          @order = Spree::Order.find_by!(number: params[:order_id]) if params[:order_id]
+          @order = Spree::Order.find_by!(number: order_id) if order_id
         end
 
         def find_address
@@ -39,10 +39,6 @@ module Spree
           else
             @address = Spree::Address.find(params[:id])
           end
-        end
-
-        def order_token
-          request.headers["X-Spree-Order-Token"] || params[:order_token]
         end
 
         def load_and_authorize_address(permission)

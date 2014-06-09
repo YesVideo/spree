@@ -9,6 +9,7 @@ module Spree
     validates :name, presence: true
 
     has_many :payments, class_name: "Spree::Payment"
+    has_many :credit_cards, class_name: "Spree::CreditCard"
 
     def self.providers
       Rails.application.config.spree.payment_methods
@@ -51,6 +52,12 @@ module Spree
 
     def source_required?
       true
+    end
+
+    # Custom gateways should redefine this method. See Gateway implementation
+    # as an example
+    def reusable_sources(order)
+      []
     end
 
     def auto_capture?

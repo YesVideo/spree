@@ -119,7 +119,7 @@ Spree::Core::Engine.add_routes do
       end
     end
 
-    resources :reports, :only => [:index, :show] do
+    resources :reports, :only => [:index] do
       collection do
         get :sales_total
         post :sales_total
@@ -136,7 +136,6 @@ Spree::Core::Engine.add_routes do
       end
     end
 
-    resources :stock_movements
     resources :stock_items, :only => [:create, :update, :destroy]
     resources :tax_rates
     resource  :tax_settings
@@ -146,5 +145,16 @@ Spree::Core::Engine.add_routes do
     resource :mail_method, :only => [:edit, :update] do
       post :testmail, :on => :collection
     end
+
+    resources :users do
+      member do
+        get :orders
+        get :items
+        get :addresses
+        put :addresses
+      end
+
+    end
+
   end
 end

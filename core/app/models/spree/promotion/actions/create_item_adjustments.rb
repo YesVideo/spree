@@ -28,6 +28,7 @@ module Spree
         def create_adjustment(adjustable, order)
           amount = self.compute_amount(adjustable)
           return if amount == 0
+          return if promotion.product_ids.present? and !promotion.product_ids.include?(adjustable.product.id)
           self.adjustments.create!(
             amount: amount,
             adjustable: adjustable,
@@ -40,8 +41,9 @@ module Spree
         # Ensure a negative amount which does not exceed the sum of the order's
         # item_total and ship_total
         def compute_amount(adjustable)
-          amount = self.calculator.compute(adjustable).to_f.abs
-          [adjustable.total, amount].min * -1
+          promotion_amount = self.calculator.compute(adjustable).to_f.abs
+          
+          [adjustable.amount, promotion_amount].min * -1
         end
 
         private
@@ -61,7 +63,8 @@ module Spree
           end
 
           def deals_with_adjustments
-            adjustment_scope = Adjustment.includes(:order).references(:spree_orders)
+            adjustment_scope = self.adjustments.includes(:order).references(:spree_orders)
+
             # For incomplete orders, remove the adjustment completely.
             adjustment_scope.where("spree_orders.completed_at IS NULL").each do |adjustment|
               adjustment.destroy

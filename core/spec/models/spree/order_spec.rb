@@ -25,10 +25,6 @@ describe Spree::Order do
       order.stub(:line_items => @line_items)
     end
 
-    it "should return ordered products" do
-      order.products.should == ['product1', 'product2']
-    end
-
     it "contains?" do
       order.contains?(@variant1).should be_true
     end
@@ -57,7 +53,7 @@ describe Spree::Order do
       credit_card_payment_method = create(:credit_card_payment_method)
       attributes = {
         :payments_attributes => [
-          { 
+          {
             :payment_method_id => credit_card_payment_method.id,
             :source_attributes => {
               :name => "Ryan Bigg",
@@ -288,7 +284,7 @@ describe Spree::Order do
       end
 
       context "and order is approved" do
-        before do 
+        before do
           order.stub :approved? => true
         end
 
@@ -437,24 +433,25 @@ describe Spree::Order do
       order.insufficient_stock_lines.size.should == 1
       order.insufficient_stock_lines.include?(line_item).should be_true
     end
-
   end
 
   context "empty!" do
-    let(:order) { stub_model(Spree::Order) }
-    
+    let(:order) { stub_model(Spree::Order, item_count: 2) }
+
     before do
-      order.stub(:line_items => line_items = [])
+      order.stub(:line_items => line_items = [1, 2])
       order.stub(:adjustments => adjustments = [])
     end
 
     it "clears out line items, adjustments and update totals" do
       expect(order.line_items).to receive(:destroy_all)
       expect(order.adjustments).to receive(:destroy_all)
+      expect(order.shipments).to receive(:destroy_all)
       expect(order.updater).to receive(:update_totals)
       expect(order.updater).to receive(:persist_totals)
 
       order.empty!
+      expect(order.item_total).to eq 0
     end
   end
 
@@ -550,6 +547,9 @@ describe Spree::Order do
         order_1.merge!(order_2)
         line_items = order_1.line_items
         line_items.count.should == 2
+
+        expect(order_1.item_count).to eq 2
+        expect(order_1.item_total).to eq line_items.map(&:amount).sum
 
         # No guarantee on ordering of line items, so we do this:
         line_items.pluck(:quantity).should =~ [1, 1]

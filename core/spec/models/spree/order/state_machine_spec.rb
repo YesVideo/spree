@@ -58,7 +58,7 @@ describe Spree::Order do
       it "adjusts tax rates when transitioning to delivery" do
         # Once for the line items
         Spree::TaxRate.should_receive(:adjust).once
-        order.should_receive(:set_shipments_cost)
+        order.stub :set_shipments_cost
         order.next!
       end
 
@@ -66,7 +66,7 @@ describe Spree::Order do
         # Once for the line items, once for the shipments
         order.shipments.build
         Spree::TaxRate.should_receive(:adjust).twice
-        order.should_receive(:set_shipments_cost)
+        order.stub :set_shipments_cost
         order.next!
       end
     end
@@ -173,7 +173,7 @@ describe Spree::Order do
 
         it "should automatically refund all payments" do
           order.stub_chain(:payments, :completed).and_return([payment])
-          payment.should_receive(:credit!)
+          payment.should_receive(:cancel!)
           order.cancel!
         end
       end

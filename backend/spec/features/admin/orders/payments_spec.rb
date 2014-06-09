@@ -75,7 +75,9 @@ describe 'Payments' do
       end
 
       click_icon :void
-      find('#payment_status').text.should == 'BALANCE DUE'
+
+      # as it had a payment greater than order total ($50)
+      find('#payment_status').text.should == 'CREDIT OWED'
       page.should have_content('Payment Updated')
 
       within_row(1) do
@@ -160,7 +162,7 @@ describe 'Payments' do
 
       it 'does not allow the amount to be edited' do
         within_row(1) do
-          page.should_not have_selector('.icon-edit')
+          page.should_not have_selector('.fa-edit')
           page.should_not have_selector('td.amount span')
         end
       end
@@ -169,10 +171,10 @@ describe 'Payments' do
 
   context "with no prior payments" do
     let(:order) { create(:order_with_line_items, :line_items_count => 1) }
+    let!(:payment_method) { create(:credit_card_payment_method)}
 
     # Regression tests for #4129
     context "with a credit card payment method" do
-      let!(:payment_method) { create(:credit_card_payment_method)}
       before do
         visit spree.admin_order_payments_path(order)
       end
@@ -197,6 +199,20 @@ describe 'Payments' do
         page.should have_content("Verification Value can't be blank")
         page.should have_content("Month is not a number")
         page.should have_content("Year is not a number")
+      end
+    end
+
+    context "user existing card" do
+      let!(:cc) do
+        create(:credit_card, user_id: order.user_id, payment_method: payment_method, gateway_customer_profile_id: "BGS-RFRE")
+      end
+
+      before { visit spree.admin_order_payments_path(order) }
+
+      it "is able to reuse customer payment source" do
+        expect(find("#card_#{cc.id}")).to be_checked
+        click_button "Continue"
+        page.should have_content("Payment has been successfully created!")
       end
     end
   end

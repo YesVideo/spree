@@ -2,7 +2,9 @@ module Spree
   class Payment < ActiveRecord::Base
     include Spree::Payment::Processing
 
-    IDENTIFIER_CHARS = (('A'..'Z').to_a + ('0'..'9').to_a - %w(0 1 I O)).freeze
+    IDENTIFIER_CHARS    = (('A'..'Z').to_a + ('0'..'9').to_a - %w(0 1 I O)).freeze
+    NON_RISKY_AVS_CODES = ['B', 'D', 'H', 'J', 'M', 'Q', 'T', 'V', 'X', 'Y'].freeze
+    RISKY_AVS_CODES     = ['A', 'C', 'E', 'F', 'G', 'I', 'K', 'L', 'N', 'O', 'P', 'R', 'S', 'U', 'W', 'Z'].freeze
 
     belongs_to :order, class_name: 'Spree::Order', touch: true, inverse_of: :payments
     belongs_to :source, polymorphic: true
@@ -33,6 +35,7 @@ module Spree
     scope :completed, -> { with_state('completed') }
     scope :pending, -> { with_state('pending') }
     scope :failed, -> { with_state('failed') }
+    scope :risky, -> { where("avs_response IN (?) OR (cvv_response_code IS NOT NULL and cvv_response_code != 'M') OR state = 'failed'", RISKY_AVS_CODES) }
     scope :valid, -> { where.not(state: %w(failed invalid)) }
 
     after_rollback :persist_invalid
@@ -104,7 +107,7 @@ module Spree
     end
 
     def credit_allowed
-      amount - offsets_total
+      amount - offsets_total.abs
     end
 
     def can_credit?
@@ -113,9 +116,11 @@ module Spree
 
     # see https://github.com/spree/spree/issues/981
     def build_source
-      return if source_attributes.nil?
-      if payment_method and payment_method.payment_source_class
+      return unless new_record?
+      if source_attributes.present? && source.blank? && payment_method.try(:payment_source_class)
         self.source = payment_method.payment_source_class.new(source_attributes)
+        self.source.payment_method_id = payment_method.id
+        self.source.user_id = self.order.user_id if self.order
       end
     end
 
@@ -130,8 +135,7 @@ module Spree
     end
 
     def is_avs_risky?
-      return false if avs_response == "D"
-      return false if avs_response.blank?
+      return false if avs_response.blank? || NON_RISKY_AVS_CODES.include?(avs_response)
       return true
     end
 

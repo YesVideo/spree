@@ -10,36 +10,12 @@ Spree::Core::Engine.add_routes do
 
   namespace :api, :defaults => { :format => 'json' } do
     resources :products do
+      resources :images
       resources :variants
       resources :product_properties
     end
 
-    resources :images
-    resources :checkouts do
-      member do
-        put :next
-        put :advance
-      end
-    end
-
-    resources :variants, :only => [:index, :show]
-
-    resources :option_types do
-      resources :option_values
-    end
-
-    get '/orders/mine', :to => 'orders#mine', :as => 'my_orders'
-
-    resources :orders do
-      resources :addresses, :only => [:show, :update]
-
-      resources :return_authorizations do
-        member do
-          put :add
-          put :cancel
-          put :receive
-        end
-      end
+    order_routes = lambda {
       member do
         put :cancel
         put :empty
@@ -56,7 +32,7 @@ Spree::Core::Engine.add_routes do
           put :credit
         end
       end
-
+      # TODO Remove after shipment api is no longer handled through order nesting.
       resources :shipments, :only => [:create, :update] do
         member do
           put :ready
@@ -65,10 +41,50 @@ Spree::Core::Engine.add_routes do
           put :remove
         end
       end
+
+      resources :addresses, :only => [:show, :update]
+
+      resources :return_authorizations do
+        member do
+          put :add
+          put :cancel
+          put :receive
+        end
+      end
+    }
+
+    resources :checkouts do
+      member do
+        put :next
+        put :advance
+      end
+      order_routes.call
     end
 
+    resources :variants, :only => [:index, :show] do
+      resources :images
+    end
+
+    resources :option_types do
+      resources :option_values
+    end
+
+    get '/orders/mine', :to => 'orders#mine', :as => 'my_orders'
+
+    resources :orders, &order_routes
+
     resources :zones
-    resources :countries, :only => [:index, :show]
+    resources :countries, :only => [:index, :show] do
+      resources :states, :only => [:index, :show]
+    end
+    resources :shipments, :only => [:create, :update] do
+      member do
+        put :ready
+        put :ship
+        put :add
+        put :remove
+      end
+    end
     resources :states,    :only => [:index, :show]
 
     resources :taxonomies do

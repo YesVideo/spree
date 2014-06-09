@@ -10,7 +10,7 @@ module Spree
 
       def create
         authorize! :create, Order
-        @order = Order.build_from_api(current_api_user, nested_params)
+        @order = Spree::Core::Importer::Order.import(current_api_user, nested_params)
         respond_with(@order, default_template: 'spree/api/orders/show', status: 201)
       end
 
@@ -31,8 +31,7 @@ module Spree
       end
 
       def show
-        load_order
-        respond_with(@order, default_template: 'spree/api/orders/show', status: 200)
+        redirect_to(api_order_path(params[:id]), status: 301)
       end
 
       def update
@@ -132,8 +131,8 @@ module Spree
           false
         end
 
-        def order_token
-          request.headers["X-Spree-Order-Token"] || params[:order_token]
+        def order_id
+          super || params[:id]
         end
     end
   end

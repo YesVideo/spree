@@ -1,4 +1,5 @@
 require 'spec_helper'
+require 'spree/testing_support/order_walkthrough'
 
 describe Spree::Order do
   let(:order) { Spree::Order.new }
@@ -175,6 +176,41 @@ describe Spree::Order do
           order.state.should == "complete"
         end
       end
+
+      context "correctly determining payment required based on shipping information" do
+        let(:shipment) do
+          FactoryGirl.create(:shipment)
+        end
+
+        before do
+          # Needs to be set here because we're working with a persisted order object
+          order.email = "test@example.com"
+          order.save!
+          order.shipments << shipment
+        end
+
+        context "with a shipment that has a price" do
+          before do
+            shipment.shipping_rates.first.update_column(:cost, 10)
+          end
+
+          it "transitions to payment" do
+            order.next!
+            order.state.should == "payment"
+          end
+        end
+
+        context "with a shipment that is free" do
+          before do
+            shipment.shipping_rates.first.update_column(:cost, 0)
+          end
+
+          it "skips payment, transitions to complete" do
+            order.next!
+            order.state.should == "complete"
+          end
+        end
+      end
     end
 
     context "from payment" do
@@ -234,7 +270,7 @@ describe Spree::Order do
       end
     end
 
-    it "should only call default transitions once when checkout_flow is redefined" do
+    pending "should only call default transitions once when checkout_flow is redefined" do
       order = SubclassedOrder.new
       order.stub :payment_required? => true
       order.should_receive(:process_payments!).once
@@ -366,9 +402,36 @@ describe Spree::Order do
     end
   end
 
+  describe "payment processing" do
+    # Turn off transactional fixtures so that we can test that
+    # processing state is persisted.
+    self.use_transactional_fixtures = false
+    before(:all) { DatabaseCleaner.strategy = :truncation }
+    after(:all) do
+      DatabaseCleaner.clean
+      DatabaseCleaner.strategy = :transaction
+    end
+    let(:order) { OrderWalkthrough.up_to(:payment) }
+    let(:creditcard) { create(:credit_card) }
+    let!(:payment_method) { create(:credit_card_payment_method, :environment => 'test') }
+
+    it "does not process payment within transaction" do
+      # Make sure we are not already in a transaction
+      ActiveRecord::Base.connection.open_transactions.should == 0
+
+      Spree::Payment.any_instance.should_receive(:authorize!) do
+        ActiveRecord::Base.connection.open_transactions.should == 0
+      end
+
+      order.payments.create!({ :amount => order.outstanding_balance, :payment_method => payment_method, :source => creditcard })
+      order.next!
+    end
+  end
+
   describe 'update_from_params' do
     let(:permitted_params) { {} }
     let(:params) { {} }
+
     it 'calls update_atributes without order params' do
       order.should_receive(:update_attributes).with({})
       order.update_from_params( params, permitted_params)
@@ -379,13 +442,63 @@ describe Spree::Order do
       order.update_from_params( params, permitted_params)
     end
 
+    context "passing a credit card" do
+      let(:permitted_params) do
+        Spree::PermittedAttributes.checkout_attributes +
+          [payments_attributes: Spree::PermittedAttributes.payment_attributes]
+      end
+
+      let(:credit_card) { create(:credit_card, user_id: order.user_id) }
+
+      let(:params) do
+        ActionController::Parameters.new(
+          order: { payments_attributes: [{payment_method_id: 1}] },
+          existing_card: credit_card.id,
+          cvc_confirm: "737",
+          payment_source: {
+            "1" => { name: "Luis Braga",
+                     number: "4111 1111 1111 1111",
+                     expiry: "06 / 2016",
+                     verification_value: "737",
+                     cc_type: "" }
+          }
+        )
+      end
+
+      before { order.user_id = 3 }
+
+      it "sets confirmation value when its available via :cvc_confirm" do
+        Spree::CreditCard.stub find: credit_card
+        expect(credit_card).to receive(:verification_value=)
+        order.update_from_params(params, permitted_params)
+      end
+
+      it "sets existing card as source for new payment" do
+        expect {
+          order.update_from_params(params, permitted_params)
+        }.to change { Spree::Payment.count }.by(1)
+
+        expect(Spree::Payment.last.source).to eq credit_card
+      end
+
+      it "dont let users mess with others users cards" do
+        credit_card.update_column :user_id, 5
+
+        expect {
+          order.update_from_params(params, permitted_params)
+        }.to raise_error
+      end
+    end
+
     context 'has params' do
       let(:permitted_params) { [ :good_param ] }
       let(:params) { ActionController::Parameters.new(order: {  bad_param: 'okay' } ) }
+
       it 'does not let through unpermitted attributes' do
         order.should_receive(:update_attributes).with({})
         order.update_from_params(params, permitted_params)
       end
+
       context 'has allowed params' do
         let(:params) { ActionController::Parameters.new(order: {  good_param: 'okay' } ) }
 
@@ -405,6 +518,5 @@ describe Spree::Order do
         end
       end
     end
-
   end
 end

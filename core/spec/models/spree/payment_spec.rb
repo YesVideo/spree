@@ -38,6 +38,19 @@ describe Spree::Payment do
     payment.log_entries.stub(:create!)
   end
 
+  context '.risky' do
+
+    let!(:payment_1) { create(:payment, avs_response: 'Y', cvv_response_code: 'M', cvv_response_message: 'Match') }
+    let!(:payment_2) { create(:payment, avs_response: 'Y', cvv_response_code: 'M', cvv_response_message: '') }
+    let!(:payment_3) { create(:payment, avs_response: 'A', cvv_response_code: 'M', cvv_response_message: 'Match') }
+    let!(:payment_4) { create(:payment, avs_response: 'Y', cvv_response_code: 'N', cvv_response_message: 'No Match') }
+
+    it 'should not return successful responses' do
+      expect(subject.class.risky.to_a).to match_array([payment_3, payment_4])
+    end
+
+  end
+
   context '#uncaptured_amount' do
     it "sets uncaptured amount on save" do
       expect(payment.uncaptured_amount).to eq(0)
@@ -484,11 +497,12 @@ describe Spree::Payment do
   end
 
   describe "#credit_allowed" do
+    # Regression test for #4403 & #4407
     it "is the difference between offsets total and payment amount" do
       payment.amount = 100
       payment.stub(:offsets_total).and_return(0)
       payment.credit_allowed.should == 100
-      payment.stub(:offsets_total).and_return(80)
+      payment.stub(:offsets_total).and_return(-80)
       payment.credit_allowed.should == 20
     end
   end
@@ -588,8 +602,10 @@ describe Spree::Payment do
   end
 
   describe "#build_source" do
-    it "should build the payment's source" do
-      params = { :amount => 100, :payment_method => gateway,
+    let(:params) do
+      {
+        :amount => 100,
+        :payment_method => gateway,
         :source_attributes => {
           :expiry =>"1 / 99",
           :number => '1234567890123',
@@ -597,10 +613,20 @@ describe Spree::Payment do
           :name => 'Spree Commerce'
         }
       }
+    end
 
+    it "should build the payment's source" do
       payment = Spree::Payment.new(params)
       payment.should be_valid
       payment.source.should_not be_nil
+    end
+
+    it "assigns user and gateway to payment source" do
+      order = create(:order)
+      source = order.payments.new(params).source
+
+      expect(source.user_id).to eq order.user_id
+      expect(source.payment_method_id).to eq gateway.id
     end
 
     it "errors when payment source not valid" do
@@ -612,6 +638,12 @@ describe Spree::Payment do
       payment.source.should_not be_nil
       payment.source.should have(1).error_on(:number)
       payment.source.should have(1).error_on(:verification_value)
+    end
+
+    it "does not build a new source when duplicating the model with source_attributes set" do
+      payment = create(:payment)
+      payment.source_attributes = params[:source_attributes]
+      expect { payment.dup }.to_not change { payment.source }
     end
   end
 
@@ -634,6 +666,14 @@ describe Spree::Payment do
 
     it "contains an IP" do
       payment.gateway_options[:ip].should == order.last_ip_address
+    end
+
+    it "contains the email address from a persisted order" do
+      # Sets the payment's order to a different Ruby object entirely
+      payment.order = Spree::Order.find(payment.order_id)
+      email = 'foo@example.com'
+      order.update_attributes(:email => email)
+      expect(payment.gateway_options[:email]).to eq(email)
     end
   end
 
@@ -741,21 +781,25 @@ describe Spree::Payment do
   end
 
   describe "is_avs_risky?" do
-    it "returns false if avs_response == 'D'" do
-      payment.update_attribute(:avs_response, "D")
-      payment.is_avs_risky?.should == false
-    end
-
-    it "returns false if avs_response == nil" do
-      payment.update_attribute(:avs_response, nil)
-      payment.is_avs_risky?.should == false
-    end
-
-    it "returns true if avs_response == A-Z, omitting D" do
-      # should use avs_response_code helper
-      ('A'..'Z').reject{ |x| x == 'D' }.to_a.each do |char|
+    it "returns false if avs_response included in NON_RISKY_AVS_CODES" do
+      ('A'..'Z').reject{ |x| subject.class::RISKY_AVS_CODES.include?(x) }.to_a.each do |char|
         payment.update_attribute(:avs_response, char)
-        payment.is_avs_risky?.should == true
+        expect(payment.is_avs_risky?).to eq false
+      end
+    end
+
+    it "returns false if avs_response.blank?" do
+      payment.update_attribute(:avs_response, nil)
+      expect(payment.is_avs_risky?).to eq false
+      payment.update_attribute(:avs_response, '')
+      expect(payment.is_avs_risky?).to eq false
+    end
+
+    it "returns true if avs_response in RISKY_AVS_CODES" do
+      # should use avs_response_code helper
+      ('A'..'Z').reject{ |x| subject.class::NON_RISKY_AVS_CODES.include?(x) }.to_a.each do |char|
+        payment.update_attribute(:avs_response, char)
+        expect(payment.is_avs_risky?).to eq true
       end
     end
   end
